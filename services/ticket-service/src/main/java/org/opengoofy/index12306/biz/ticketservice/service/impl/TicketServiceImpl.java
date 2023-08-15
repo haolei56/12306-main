@@ -117,19 +117,25 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
     @Override
     public TicketPageQueryRespDTO pageListTicketQuery(TicketPageQueryReqDTO requestParam) {
         // 责任链模式 验证城市名称是否存在、不存在加载缓存等等
+        //这一行代码通过责任链模式来处理车票查询的逻辑。根据 TicketChainMarkEnum.TRAIN_QUERY_FILTER 指定的标识，选择并执行相应的处理链，用于验证城市名称是否存在以及加载缓存等。
         ticketPageQueryAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_QUERY_FILTER.name(), requestParam);
-        StationDO fromStationDO = stationMapper.selectOne(Wrappers.lambdaQuery(StationDO.class)
+        StationDO fromStationDO = stationMapper.selectOne(Wrappers.lambdaQuery(StationDO.class)//这一行代码从数据库中查询起始站点的信息，通过 stationMapper 对象执行查询。
                 .eq(StationDO::getCode, requestParam.getFromStation())
         );
-        StationDO toStationDO = stationMapper.selectOne(Wrappers.lambdaQuery(StationDO.class)
+        StationDO toStationDO = stationMapper.selectOne(Wrappers.lambdaQuery(StationDO.class)//这一行代码从数据库中查询目标站点的信息，通过 stationMapper 对象执行查询。
                 .eq(StationDO::getCode, requestParam.getToStation())
         );
-        LambdaQueryWrapper<TrainStationRelationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)
+        LambdaQueryWrapper<TrainStationRelationDO> queryWrapper = Wrappers.lambdaQuery(TrainStationRelationDO.class)//创建一个查询条件包装器，用于查询与站点有关的车站关系信息。
                 .eq(TrainStationRelationDO::getStartRegion, fromStationDO.getRegionName())
                 .eq(TrainStationRelationDO::getEndRegion, toStationDO.getRegionName());
-        List<TrainStationRelationDO> trainStationRelationList = trainStationRelationMapper.selectList(queryWrapper);
-        List<TicketListDTO> seatResults = new ArrayList<>();
-        Set<Integer> trainBrandSet = new HashSet<>();
+        List<TrainStationRelationDO> trainStationRelationList = trainStationRelationMapper.selectList(queryWrapper);//查询满足条件的车站关系信息列表，通过 trainStationRelationMapper 对象执行查询。
+        List<TicketListDTO> seatResults = new ArrayList<>();//创建一个空的车票信息列表，用于存储查询结果。
+        Set<Integer> trainBrandSet = new HashSet<>();//创建一个空的集合，用于存储不同的火车品牌编号。
+        //使用循环遍历 trainStationRelationList 中的每个车站关系信息：
+        // 通过 TrainStationRelationDO 对象获取关联的火车信息，使用 TrainDO 对象执行查询。
+        // 创建一个 TicketListDTO 对象，将火车信息填充到这个对象中。
+        // 查询该车次的座位价格信息，并将座位信息填充到 TicketListDTO 对象中。
+        // 将填充好信息的 TicketListDTO 对象添加到 seatResults 列表中。
         for (TrainStationRelationDO each : trainStationRelationList) {
             LambdaQueryWrapper<TrainDO> trainQueryWrapper = Wrappers.lambdaQuery(TrainDO.class).eq(TrainDO::getId, each.getTrainId());
             TrainDO trainDO = trainMapper.selectOne(trainQueryWrapper);
@@ -177,7 +183,7 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
             result.setSeatClassList(seatClassList);
             seatResults.add(result);
         }
-        return TicketPageQueryRespDTO.builder()
+        return TicketPageQueryRespDTO.builder()//返回一个 TicketPageQueryRespDTO 对象，将查询结果封装到这个对象中，并返回给调用者。返回的对象包括车票信息列表、出发站点列表、到达站点列表、火车品牌列表和座位类型列表等信息。
                 .trainList(seatResults)
                 .departureStationList(buildDepartureStationList(seatResults))
                 .arrivalStationList(buildArrivalStationList(seatResults))
@@ -186,13 +192,14 @@ public class TicketServiceImpl extends ServiceImpl<TicketMapper, TicketDO> imple
                 .build();
     }
 
+    //，这段代码实现了购买火车票的整个流程，包括了购票前的验证、选座、保存订单信息、发送延时消息等操作。这些操作都在分布式锁的保护下，确保了购票过程的并发安全性。最终，将购票结果以响应的形式返回给调用者。
     @Override
     @Transactional(rollbackFor = Throwable.class)
     public TicketPurchaseRespDTO purchaseTickets(PurchaseTicketReqDTO requestParam) {
         // 责任链模式，验证 0：参数必填 1：参数正确性 2：列车车次余量是否充足 3：乘客是否已买当前车次等
         purchaseTicketAbstractChainContext.handler(TicketChainMarkEnum.TRAIN_PURCHASE_TICKET_FILTER.name(), requestParam);
         String trainId = requestParam.getTrainId();
-        TrainDO trainDO = distributedCache.safeGet(
+        TrainDO trainDO = distributedCache.safeGet(//这一行代码使用分布式缓存来获取指定 key 的缓存数据。如果缓存中没有数据，则通过回调函数从数据库中获取数据，并将其缓存起来。
                 TRAIN_INFO + trainId,
                 TrainDO.class,
                 () -> trainMapper.selectById(trainId),
